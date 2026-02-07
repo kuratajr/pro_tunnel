@@ -93,12 +93,12 @@ proxvn [OPTIONS] [LOCAL_PORT]
 
 ```bash
 # Kết nối với cert-pin verification
-proxvn --cert-pin 5d21642f9c2ac2aef414ecb27b54cdb5d53cb6d554bbf965de19d2c8652f47c6 --proto http 3000
+proxvn --cert-pin 5e6af1198473d3b0209876511aaf245405c3e847e56e2cd3e325079aacd1f465e --proto http 3000
 ```
 
 **Cert-pin cho server chính thức:**
 ```
-5D21642F9C2AC2AEF414ECB27B54CDB5D53CB6D554BBF965DE19D2C8652F47C6
+e6af1198473d3b0209876511aaf245405c3e847e56e2cd3e325079aacd1f465e
 ```
 
 **Lưu ý:** Fingerprint này phải khớp với certificate của server. Nếu không khớp, client sẽ từ chối kết nối.
@@ -118,7 +118,7 @@ proxvn --proto http 8080
 proxvn --proto http --host 192.168.1.50 80
 
 # Với cert-pin security
-proxvn --proto http --cert-pin 5d21642f9c2ac2aef414ecb27b54cdb5d53cb6d554bbf965de19d2c8652f47c6 3000
+proxvn --proto http --cert-pin e6af1198473d3b0209876511aaf245405c3e847e56e2cd3e325079aacd1f465e 3000
 ```
 
 **Kết quả:**
@@ -136,7 +136,7 @@ Dùng cho SSH, RDP, MySQL, PostgreSQL, v.v.
 proxvn 22
 
 # Public SSH với bảo mật cao
-proxvn --cert-pin 5d21642f9c2ac2aef414ecb27b54cdb5d53cb6d554bbf965de19d2c8652f47c6 22
+proxvn --cert-pin e6af1198473d3b0209876511aaf245405c3e847e56e2cd3e325079aacd1f465e 22
 
 # Public Remote Desktop (Windows)
 proxvn 3389
@@ -170,7 +170,7 @@ proxvn --proto udp 8211
 proxvn --proto udp 27015
 
 # Với cert-pin security
-proxvn --proto udp --cert-pin 5d21642f9c2ac2aef414ecb27b54cdb5d53cb6d554bbf965de19d2c8652f47c6 19132
+proxvn --proto udp --cert-pin e6af1198473d3b0209876511aaf245405c3e847e56e2cd3e325079aacd1f465e 19132
 ```
 
 #### 4. File Sharing Mode (`--file`)
@@ -188,7 +188,7 @@ proxvn --file /home/user/Movies --user media --pass secret --permissions r
 proxvn --file "C:\Projects" --pass abc123 --permissions rw
 
 # Share với bảo mật cao
-proxvn --file ~/Documents --pass mypassword --cert-pin 5d21642f9c2ac2aef414ecb27b54cdb5d53cb6d554bbf965de19d2c8652f47c6
+proxvn --file ~/Documents --pass mypassword --cert-pin e6af1198473d3b0209876511aaf245405c3e847e56e2cd3e325079aacd1f465e
 ```
 
 **Tính năng File Share:**
@@ -657,7 +657,7 @@ sudo mount -t davfs https://subdomain.vutrungocrong.fun /mnt/proxvn
 
 1. **Sử dụng Certificate Pinning:**
    ```bash
-   proxvn --cert-pin 5d21642f9c2ac2aef414ecb27b54cdb5d53cb6d554bbf965de19d2c8652f47c6 --proto http 3000
+   proxvn --cert-pin e6af1198473d3b0209876511aaf245405c3e847e56e2cd3e325079aacd1f465e --proto http 3000
    ```
 
 2. **Đặt mật khẩu mạnh cho File Sharing:**
@@ -826,12 +826,12 @@ cp .env.server.example .env
 
 **Official Server Cert-Pin:**
 ```
-5D21642F9C2AC2AEF414ECB27B54CDB5D53CB6D554BBF965DE19D2C8652F47C6
+e6af1198473d3b0209876511aaf245405c3e847e56e2cd3e325079aacd1f465e
 ```
 
 **Usage:**
 ```bash
-proxvn --cert-pin 5d21642f9c2ac2aef414ecb27b54cdb5d53cb6d554bbf965de19d2c8652f47c6 [other-flags]
+proxvn --cert-pin e6af1198473d3b0209876511aaf245405c3e847e56e2cd3e325079aacd1f465e [other-flags]
 ```
 
 ## Acknowledgments
