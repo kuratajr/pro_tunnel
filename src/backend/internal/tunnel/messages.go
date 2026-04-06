@@ -9,6 +9,16 @@ import (
 
 const Version = "7.5"
 
+// TunnelConfig defines a single tunnel's configuration
+type TunnelConfig struct {
+	ID            string `json:"id,omitempty"`
+	Protocol      string `json:"protocol"`      // tcp, udp, http
+	LocalAddr     string `json:"local_addr"`    // e.g. localhost:80
+	RemotePort    int    `json:"remote_port,omitempty"`   // Actual port assigned by server
+	RequestedPort int    `json:"requested_port,omitempty"` // Port requested by client
+	Subdomain     string `json:"subdomain,omitempty"`
+}
+
 // Message is the control-plane payload exchanged between tunnel peers.
 type Message struct {
 	Type          string `json:"type"`
@@ -23,6 +33,8 @@ type Message struct {
 	Protocol      string `json:"protocol,omitempty"`
 	RemoteAddr    string `json:"remote_addr,omitempty"`
 	Payload       string `json:"payload,omitempty"`
+
+	Tunnels []TunnelConfig `json:"tunnels,omitempty"` // For multi-port support
 
 	// HTTP tunneling fields
 	Subdomain  string            `json:"subdomain,omitempty"`

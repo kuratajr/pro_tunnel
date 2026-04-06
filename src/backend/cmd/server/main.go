@@ -129,22 +129,23 @@ type clientSession struct {
 	conn           net.Conn
 	enc            *jsonWriter
 	dec            *jsonReader
-	clientID       string
-	key            string
-	target         string
-	protocol       string
-	publicPort     int
-	subdomain      string // For HTTP tunneling
-	lastSeen       time.Time
-	closeOnce      sync.Once
-	done           chan struct{}
-	mu             sync.Mutex
-	bytesUp        uint64
-	bytesDown      uint64
-	remoteIP       string
-	udpSecret      []byte // Key for UDP encryption
-	publicListener net.Listener
-
+	clientID   string
+	key        string
+	lastSeen   time.Time
+	closeOnce  sync.Once
+	done       chan struct{}
+	mu         sync.Mutex
+	bytesUp    uint64
+	bytesDown  uint64
+	remoteIP   string
+	udpSecret  []byte // Key for UDP encryption
+	
+	// Multi-tunnel support
+	tunnels    []tunnel.TunnelConfig
+	listeners  map[int]net.Listener    // Map public port to TCP listener
+	udpConns   map[int]*net.UDPConn    // Map public port to UDP listener (if implemented)
+	subdomain  string                  // For backward compatibility with single HTTP tunnel
+	protocol   string                  // For backward compatibility
 	activeConnections int64
 	totalConnections  uint64
 }
@@ -780,84 +781,84 @@ func (s *server) handleClient(session *clientSession, msg tunnel.Message) error 
 		}
 	}
 
-	// Assign public port (try to honor requested port for reconnecting clients)
-	publicPort := s.getNextPublicPort(key, msg.RequestedPort)
-
 	session.clientID = strings.TrimSpace(msg.ClientID)
 	if session.clientID == "" {
 		session.clientID = fmt.Sprintf("client-%s", key[:8])
 	}
 	session.key = key
-	session.target = msg.Target
-	session.protocol = strings.ToLower(strings.TrimSpace(msg.Protocol))
-	if session.protocol == "" {
-		session.protocol = "tcp"
-	}
-	session.publicPort = publicPort
+	session.listeners = make(map[int]net.Listener)
+	session.udpConns = make(map[int]*net.UDPConn)
 
-	// Register client
-	s.addClient(session)
+	// Process each tunnel configuration
+	var assignedTunnels []tunnel.TunnelConfig
+	for _, t := range msg.Tunnels {
+		assigned := t
+		// Assign public port
+		publicPort := s.getNextPublicPort(key, t.RequestedPort)
+		assigned.RemotePort = publicPort
 
-	// For HTTP protocol, assign subdomain
-	var baseDomain string
-	if session.protocol == "http" {
-		if err := s.registerHTTPClient(session); err != nil {
-			log.Printf("[server] Failed to register HTTP client: %v", err)
-			return fmt.Errorf("HTTP tunneling unavailable: %w", err)
+		// Handle HTTP protocol
+		if assigned.Protocol == "http" {
+			// Logic to assign subdomain based on clientID or requested subdomain
+			subdomain := assigned.Subdomain
+			if subdomain == "" {
+				subdomain = session.clientID
+			}
+			// Simplified subdomain registration logic for now
+			assigned.Subdomain = subdomain
+			if err := s.registerHTTPTunnel(session, &assigned); err != nil {
+				log.Printf("[server] Failed to register HTTP tunnel: %v", err)
+			}
 		}
-		if s.httpProxy != nil {
-			baseDomain = s.httpProxy.GetBaseDomain()
-		}
+		assignedTunnels = append(assignedTunnels, assigned)
 	}
+	session.tunnels = assignedTunnels
 
 	// Generate UDP encryption key
 	udpSecret, err := tunnel.GenerateKey()
-	if err != nil {
-		log.Printf("[server] Failed to generate UDP key: %v", err)
-		// Fallback to plain text if key generation fails (should not happen)
-	} else {
+	if err == nil {
 		session.udpSecret = udpSecret
 	}
+
+	// Register client
+	s.addClient(session)
 
 	// Send registration response
 	resp := tunnel.Message{
 		Type:       "registered",
 		Key:        key,
 		ClientID:   session.clientID,
-		RemotePort: publicPort,
-		Protocol:   session.protocol,
+		Tunnels:    session.tunnels,
 		Version:    tunnel.Version,
-		Subdomain:  session.subdomain, // Include subdomain for HTTP mode
-		BaseDomain: baseDomain,
+		BaseDomain: "vutrungocrong.fun",
 	}
-
-	if udpSecret != nil {
-		resp.UDPSecret = base64.StdEncoding.EncodeToString(udpSecret)
+	if s.httpProxy != nil {
+		resp.BaseDomain = s.httpProxy.GetBaseDomain()
+	}
+	if session.udpSecret != nil {
+		resp.UDPSecret = base64.StdEncoding.EncodeToString(session.udpSecret)
 	}
 
 	if err := session.enc.Encode(resp); err != nil {
 		return fmt.Errorf("failed to send registration response: %w", err)
 	}
 
-	if session.protocol == "http" {
-		log.Printf("[server] client %s registered, HTTP mode, subdomain: %s.vutrungocrong.fun, target %s",
-			session.clientID, session.subdomain, session.target)
-	} else {
-		log.Printf("[server] client %s registered, public port %d, protocol %s, target %s",
-			session.clientID, publicPort, session.protocol, session.target)
+	log.Printf("[server] client %s registered with %d tunnels", session.clientID, len(session.tunnels))
+
+	// Start listeners for each tunnel
+	for _, t := range session.tunnels {
+		if t.Protocol == "tcp" || t.Protocol == "http" {
+			go s.startPublicTCPListener(session, t)
+		} else if t.Protocol == "udp" {
+			go s.startPublicUDPListener(session, t)
+		}
 	}
 
 	// Start heartbeat checker
 	go s.heartbeatChecker(session)
 
 	atomic.AddInt64(&s.activeConnections, 1)
-	s.logOnce(fmt.Sprintf("[server] active sessions: %d", atomic.LoadInt64(&s.activeConnections)), "active_sessions")
 	defer atomic.AddInt64(&s.activeConnections, -1)
-
-	// Start public listener for TCP
-	if session.protocol == "tcp" {
-		go s.startPublicListener(session)
-	}
 
 	// Handle control messages
 	return s.controlLoop(session)
@@ -902,55 +903,130 @@ func (s *server) controlLoop(session *clientSession) error {
 	}
 }
 
-func (s *server) startPublicListener(session *clientSession) {
-	listenAddr := fmt.Sprintf(":%d", session.publicPort)
+func (s *server) registerHTTPTunnel(session *clientSession, t *tunnel.TunnelConfig) error {
+	if s.httpProxy == nil {
+		return errors.New("HTTP proxy not initialized")
+	}
+	return s.httpProxy.RegisterClient(t.Subdomain, session)
+}
+
+func (s *server) startPublicTCPListener(session *clientSession, t tunnel.TunnelConfig) {
+	listenAddr := fmt.Sprintf(":%d", t.RemotePort)
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		log.Printf("[server] failed to listen on public port %d: %v", session.publicPort, err)
+		log.Printf("[server] failed to listen on public port %d: %v", t.RemotePort, err)
 		return
 	}
 
-	// Store listener safely
 	session.mu.Lock()
 	select {
 	case <-session.done:
-		// Session closed while we were setting up
 		session.mu.Unlock()
 		listener.Close()
 		return
 	default:
-		session.publicListener = listener
+		if session.listeners == nil {
+			session.listeners = make(map[int]net.Listener)
+		}
+		session.listeners[t.RemotePort] = listener
 	}
 	session.mu.Unlock()
 
-	defer listener.Close()
+	defer func() {
+		listener.Close()
+		session.mu.Lock()
+		delete(session.listeners, t.RemotePort)
+		session.mu.Unlock()
+	}()
 
-	log.Printf("[server] public listener started on port %d for client %s", session.publicPort, session.clientID)
+	log.Printf("[server] public TCP listener started on port %d for client %s", t.RemotePort, session.clientID)
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) || strings.Contains(err.Error(), "use of closed network connection") {
+			if errors.Is(err, net.ErrClosed) {
 				return
 			}
-
-			log.Printf("[server] public listener error: %v", err)
-
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
-				time.Sleep(100 * time.Millisecond)
-				continue
-			}
-			return
+			continue
 		}
-
-		go s.handlePublicConnection(session, conn)
+		go s.handlePublicConnection(session, conn, t.RemotePort)
 	}
 }
 
-func (s *server) handlePublicConnection(session *clientSession, publicConn net.Conn) {
+func (s *server) startPublicUDPListener(session *clientSession, t tunnel.TunnelConfig) {
+	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", t.RemotePort))
+	if err != nil {
+		return
+	}
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		log.Printf("[server] failed to listen on public UDP port %d: %v", t.RemotePort, err)
+		return
+	}
+	session.mu.Lock()
+	if session.udpConns == nil {
+		session.udpConns = make(map[int]*net.UDPConn)
+	}
+	session.udpConns[t.RemotePort] = conn
+	session.mu.Unlock()
+
+	defer func() {
+		conn.Close()
+		session.mu.Lock()
+		delete(session.udpConns, t.RemotePort)
+		session.mu.Unlock()
+	}()
+
+	log.Printf("[server] public UDP listener started on port %d for client %s", t.RemotePort, session.clientID)
+
+	buf := make([]byte, 65535)
+	for {
+		n, peerAddr, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			continue
+		}
+		s.handleUDPInbound(session, t.RemotePort, peerAddr, buf[:n])
+	}
+}
+
+func (s *server) handleUDPInbound(session *clientSession, publicPort int, peerAddr *net.UDPAddr, data []byte) {
+	sessionKey := fmt.Sprintf("%d-%s", publicPort, peerAddr.String())
+	
+	s.udpMu.Lock()
+	udpSess, ok := s.udpSessions[sessionKey]
+	if !ok {
+		id, _ := tunnel.GenerateID()
+		udpSess = &udpServerSession{
+			id:         id,
+			clientKey:  session.key,
+			udpSecret:  session.udpSecret,
+			remoteAddr: peerAddr,
+			closed:     make(chan struct{}),
+		}
+		s.udpSessions[sessionKey] = udpSess
+		
+		// Notify client about new UDP "connection"
+		_ = session.enc.Encode(tunnel.Message{
+			Type:       "udp_open",
+			ID:         id,
+			RemotePort: publicPort,
+			RemoteAddr: peerAddr.String(),
+		})
+	}
+	s.udpMu.Unlock()
+
+	s.sendUDPData(session.key, udpSess.id, data)
+}
+
+func (s *server) handlePublicConnection(session *clientSession, publicConn net.Conn, remotePort int) {
 	defer publicConn.Close()
 
-	// Generate proxy ID
+	// Rate limit check
+	// if !s.checkConnectionRateLimit(session.remoteIP) { ... }
+
 	proxyID, err := tunnel.GenerateID()
 	if err != nil {
 		log.Printf("[server] failed to generate proxy ID: %v", err)
@@ -972,10 +1048,11 @@ func (s *server) handlePublicConnection(session *clientSession, publicConn net.C
 
 	// Send proxy request to client
 	proxyMsg := tunnel.Message{
-		Type:     "proxy",
-		Key:      session.key,
-		ClientID: session.clientID,
-		ID:       proxyID,
+		Type:       "proxy",
+		Key:        session.key,
+		ClientID:   session.clientID,
+		ID:         proxyID,
+		RemotePort: remotePort,
 	}
 
 	if err := session.enc.Encode(proxyMsg); err != nil {
@@ -1094,10 +1171,6 @@ func (s *server) handleProxyRequest(session *clientSession, proxyID string) {
 }
 
 func (s *server) handleUDPOpen(session *clientSession, msg tunnel.Message) {
-	if session.protocol != "udp" {
-		return
-	}
-
 	// Check rate limit for UDP session creation
 	if !s.checkUDPSessionRateLimit(session.remoteIP) {
 		log.Printf("[server] rate limit exceeded for UDP session creation from %s", session.remoteIP)
@@ -1366,27 +1439,26 @@ func (s *server) removeClient(session *clientSession) {
 
 		// Create port reservation instead of releasing immediately
 		// This allows the client to reconnect and get the same port within 5 minutes
-		if session.publicPort > 0 && session.key != "" {
-			s.reservationMu.Lock()
-			s.portReservations[session.key] = &portReservation{
-				port:      session.publicPort,
-				expiresAt: time.Now().Add(5 * time.Minute), // 5 minute grace period
-			}
-			s.reservationMu.Unlock()
-			log.Printf("[server] Reserved port %d for client %s (key: %s) for 5 minutes",
-				session.publicPort, session.clientID, session.key)
+		// Note: session.publicPort is not a direct field, need to iterate tunnels
+		for _, t := range session.tunnels {
+			if t.RemotePort > 0 && session.key != "" {
+				s.reservationMu.Lock()
+				s.portReservations[session.key] = &portReservation{
+					port:      t.RemotePort,
+					expiresAt: time.Now().Add(5 * time.Minute), // 5 minute grace period
+				}
+				s.reservationMu.Unlock()
+				log.Printf("[server] Reserved port %d for client %s (key: %s) for 5 minutes",
+					t.RemotePort, session.clientID, session.key)
 
-			// Still release the port back to pool, but keep reservation
-			s.releasePort(session.publicPort)
+				// Still release the port back to pool, but keep reservation
+				s.releasePort(t.RemotePort)
+			}
 		}
 	}
 	s.clientsMu.Unlock()
 
 	// Always ensure this specific session is closed
-	// Unregister from HTTP proxy if applicable
-	if existingSession == session {
-		s.unregisterHTTPClient(session)
-	}
 	session.Close()
 }
 
@@ -1406,37 +1478,32 @@ func (s *server) sendDashboardUpdate(conn *websocket.Conn) error {
 
 	var activeProxyConnections int64
 	for _, session := range s.clients {
-		host, port, _ := net.SplitHostPort(session.target)
-		if host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1" {
-			host = session.remoteIP
-		}
-		if port == "" {
-			port = session.target
-		}
-
 		// Display subdomain for HTTP tunnels, IP:port for others
-		publicHost := fmt.Sprintf("103.77.246.206:%d", session.publicPort)
-		if session.protocol == "http" && session.subdomain != "" {
-			publicHost = fmt.Sprintf("https://%s.%s", session.subdomain, baseDomain)
-		}
-
+		publicHost := fmt.Sprintf("103.77.246.206")
+		
 		up := atomic.LoadUint64(&session.bytesUp)
 		down := atomic.LoadUint64(&session.bytesDown)
 		totalUp += up
 		totalDown += down
 		activeProxyConnections += atomic.LoadInt64(&session.activeConnections)
 
-		tunnels = append(tunnels, gin.H{
-			"name":        session.clientID,
-			"status":      "active",
-			"protocol":    session.protocol,
-			"local_host":  host,
-			"local_port":  port,
-			"public_port": session.publicPort,
-			"public_host": publicHost,
-			"bytes_up":    up,
-			"bytes_down":  down,
-		})
+		for _, t := range session.tunnels {
+			host := publicHost
+			if t.Protocol == "http" && t.Subdomain != "" {
+				host = fmt.Sprintf("https://%s.%s", t.Subdomain, baseDomain)
+			} else {
+				host = fmt.Sprintf("%s:%d", publicHost, t.RemotePort)
+			}
+
+			tunnels = append(tunnels, gin.H{
+				"name":        session.clientID,
+				"status":      "active",
+				"protocol":    t.Protocol,
+				"public_host": host,
+				"bytes_up":    up,
+				"bytes_down":  down,
+			})
+		}
 	}
 
 	// Send tunnel update
@@ -1535,6 +1602,45 @@ func (s *server) getNextPublicPort(clientKey string, requestedPort int) int {
 	return port
 }
 
+func (session *clientSession) Close() {
+	s := session.server
+	s.clientsMu.Lock()
+	delete(s.clients, session.key)
+	s.clientsMu.Unlock()
+
+	session.closeOnce.Do(func() {
+		close(session.done)
+		session.conn.Close()
+
+		session.mu.Lock()
+		// Close all TCP listeners
+		for _, l := range session.listeners {
+			l.Close()
+		}
+		// Close all UDP listeners
+		for _, u := range session.udpConns {
+			u.Close()
+		}
+		
+		// Unregister from HTTP proxy
+		if s.httpProxy != nil {
+			for _, t := range session.tunnels {
+				if t.Protocol == "http" {
+					s.httpProxy.UnregisterClient(t.Subdomain)
+				}
+			}
+			// Backwards compatibility
+			if session.subdomain != "" {
+				s.httpProxy.UnregisterClient(session.subdomain)
+			}
+		}
+		session.mu.Unlock()
+		
+		log.Printf("[server] client %s disconnected", session.clientID)
+	})
+}
+
+
 func (s *server) releasePort(port int) {
 	s.portMu.Lock()
 	defer s.portMu.Unlock()
@@ -1546,27 +1652,6 @@ func (s *server) releasePort(port int) {
 	delete(s.usedPorts, port)
 	s.availablePorts = append(s.availablePorts, port)
 	sort.Ints(s.availablePorts)
-}
-
-func (s *server) getClient(clientID string) *clientSession {
-	s.clientsMu.RLock()
-	defer s.clientsMu.RUnlock()
-	return s.clients[clientID]
-}
-
-func (session *clientSession) Close() {
-	session.closeOnce.Do(func() {
-		close(session.done)
-		if session.conn != nil {
-			session.conn.Close()
-		}
-
-		session.mu.Lock()
-		if session.publicListener != nil {
-			session.publicListener.Close()
-		}
-		session.mu.Unlock()
-	})
 }
 
 func (s *udpServerSession) Close() {

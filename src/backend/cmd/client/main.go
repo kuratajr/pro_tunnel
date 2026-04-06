@@ -49,17 +49,22 @@ const (
 
 type client struct {
 	serverAddr         string
-	localAddr          string
-	key                string
 	clientID           string
-	remotePort         int
-	publicHost         string
-	protocol           string
-	subdomain          string // Subdomain assigned by server for HTTP mode
-	baseDomain         string // Base domain assigned by server for HTTP mode
+	key                string
 	certFingerprint    string // Optional: Server certificate fingerprint for pinning
 	insecureSkipVerify bool   // Skip TLS certificate verification
 	uiEnabled          bool
+
+	// Backward compatibility fields
+	protocol   string
+	subdomain  string
+	publicHost string
+	localAddr  string // Used as a fallback or primary local address
+
+	// Multi-tunnel support
+	tunnels   []tunnel.TunnelConfig
+	tunnelMu  sync.RWMutex
+	baseDomain string // Base domain assigned by server for HTTP mode
 
 	// Control connection
 	control        net.Conn
@@ -114,7 +119,6 @@ type udpClientSession struct {
 	timer      *time.Timer
 	idleCount  int
 }
-
 func (s *udpClientSession) Close() {
 	s.closeOnce.Do(func() {
 		close(s.closed)
@@ -249,6 +253,11 @@ Licensed under FREE TO USE - NON-COMMERCIAL ONLY
 		return
 	}
 
+	protocol := strings.ToLower(strings.TrimSpace(*proto))
+	if protocol != "udp" && protocol != "http" {
+		protocol = "tcp"
+	}
+
 	clientID := strings.TrimSpace(*id)
 	if clientID == "" {
 		host, _ := os.Hostname()
@@ -261,43 +270,25 @@ Licensed under FREE TO USE - NON-COMMERCIAL ONLY
 	}
 	localPort := *portFlag
 
-	args := normalizedArgs(flag.Args())
-	switch len(args) {
-	case 0:
-		// use flag defaults
-	case 1:
-		if p, err := strconv.Atoi(args[0]); err == nil && p > 0 && p <= 65535 {
-			localPort = p
-		} else {
-			log.Fatalf("[client] port không hợp lệ: %q", args[0])
-		}
-	default:
-		if strings.TrimSpace(args[0]) != "" {
-			localHost = args[0]
-		}
-		if p, err := strconv.Atoi(args[1]); err == nil && p > 0 && p <= 65535 {
-			localPort = p
-		} else {
-			log.Fatalf("[client] port không hợp lệ: %q", args[1])
-		}
-	}
-
-	if localPort <= 0 || localPort > 65535 {
-		log.Fatalf("[client] port không hợp lệ: %d", localPort)
-	}
-
-	protocol := strings.ToLower(strings.TrimSpace(*proto))
-	if protocol != "udp" && protocol != "http" {
-		protocol = "tcp"
-	}
-
 	cl := &client{
 		serverAddr:      *serverAddr,
-		localAddr:       net.JoinHostPort(localHost, strconv.Itoa(localPort)),
 		clientID:        clientID,
-		protocol:        protocol,
 		certFingerprint: strings.ToLower(strings.TrimSpace(*certPin)),
 		uiEnabled:       *UI && term.IsTerminal(int(os.Stdout.Fd())),
+	}
+
+	// Parse tunnel arguments
+	args := flag.Args()
+	if len(args) == 0 {
+		// Use flag defaults
+		cl.tunnels = append(cl.tunnels, tunnel.TunnelConfig{
+			Protocol:  protocol,
+			LocalAddr: net.JoinHostPort(localHost, strconv.Itoa(localPort)),
+		})
+	} else {
+		for _, arg := range args {
+			cl.tunnels = append(cl.tunnels, cl.parseTunnelArg(arg))
+		}
 	}
 
 	if err := cl.run(); err != nil {
@@ -389,18 +380,14 @@ func (c *client) connectControl() error {
 		}
 	}()
 
+	c.tunnelMu.RLock()
 	register := tunnel.Message{
 		Type:     "register",
 		Key:      c.key,
 		ClientID: c.clientID,
-		Target:   c.localAddr,
-		Protocol: c.protocol,
+		Tunnels:  c.tunnels,
 	}
-
-	// If reconnecting and we had a port before, request the same port
-	if c.remotePort > 0 {
-		register.RequestedPort = c.remotePort
-	}
+	c.tunnelMu.RUnlock()
 
 	if err := c.enc.Encode(register); err != nil {
 		return err
@@ -416,15 +403,25 @@ func (c *client) connectControl() error {
 	if strings.TrimSpace(resp.Key) != "" {
 		c.key = strings.TrimSpace(resp.Key)
 	}
-	c.remotePort = resp.RemotePort
-	if strings.TrimSpace(resp.Protocol) != "" {
-		c.protocol = strings.ToLower(strings.TrimSpace(resp.Protocol))
-	}
 
-	// For HTTP mode, server assigns a subdomain
-	if c.protocol == "http" && resp.Subdomain != "" {
-		c.subdomain = resp.Subdomain
+	// Update tunnels with server assignments
+	c.tunnelMu.Lock()
+	c.tunnels = resp.Tunnels
+	
+	// Update backward compatibility fields from the first tunnel
+	if len(c.tunnels) > 0 {
+		first := c.tunnels[0]
+		c.protocol = first.Protocol
+		c.subdomain = first.Subdomain
+		c.localAddr = first.LocalAddr
+		
+		hostPart := c.serverAddr
+		if host, _, err := net.SplitHostPort(c.serverAddr); err == nil {
+			hostPart = host
+		}
+		c.publicHost = net.JoinHostPort(hostPart, strconv.Itoa(first.RemotePort))
 	}
+	c.tunnelMu.Unlock()
 
 	// Handle UDP Encryption Key
 	if resp.UDPSecret != "" {
@@ -438,28 +435,23 @@ func (c *client) connectControl() error {
 		c.baseDomain = resp.BaseDomain
 	}
 
-	hostPart := c.serverAddr
-	if host, _, err := net.SplitHostPort(c.serverAddr); err == nil {
-		hostPart = host
-	}
-	c.publicHost = net.JoinHostPort(hostPart, strconv.Itoa(c.remotePort))
 	c.setUDPCtrlStatus("n/a")
 
-	// Log success based on protocol
-	if c.protocol == "http" {
-		log.Printf("[client] ✅ HTTP Tunnel Active")
-		log.Printf("[client] 🌐 Public URL: https://%s.vutrungocrong.fun", c.subdomain)
-		log.Printf("[client] 📍 Forwarding to: %s", c.localAddr)
-	} else {
-		log.Printf("[client] đăng ký thành công, public port %d", c.remotePort)
+	// Log success for each tunnel
+	c.tunnelMu.RLock()
+	for _, t := range c.tunnels {
+		if t.Protocol == "http" {
+			log.Printf("[client] ✅ HTTP Tunnel Active: https://%s.%s -> %s", t.Subdomain, c.baseDomain, t.LocalAddr)
+		} else {
+			log.Printf("[client] ✅ %s Tunnel Active: port %d -> %s", strings.ToUpper(t.Protocol), t.RemotePort, t.LocalAddr)
+		}
 	}
+	c.tunnelMu.RUnlock()
 
-	if c.protocol == "udp" {
+	if c.isUDP() {
 		c.setUDPCtrlStatus("offline")
 		if err := c.setupUDPChannel(); err != nil {
 			log.Printf("[client] thiết lập UDP control lỗi: %v", err)
-		} else if debugUDP {
-			log.Printf("[client] UDP control đang chờ handshake với %s", c.serverAddr)
 		}
 	}
 	go c.heartbeatLoop()
@@ -481,7 +473,7 @@ func (c *client) receiveLoop() error {
 
 		switch msg.Type {
 		case "proxy":
-			go c.handleProxy(msg.ID)
+			go c.handleProxy(msg)
 		case "udp_open":
 			c.handleUDPOpen(msg)
 		case "udp_close":
@@ -623,19 +615,35 @@ func (c *client) displayLoop() {
 	}
 }
 
-func (c *client) handleProxy(id string) {
-	if c.protocol == "udp" {
-		log.Printf("[client] bỏ qua proxy TCP vì tunnel đang ở chế độ UDP")
-		return
+func (c *client) handleProxy(msg tunnel.Message) {
+	if c.isUDP() && !c.isHTTP() { // Simple check, better to check specific tunnel in future
+		// log.Printf("[client] bỏ qua proxy TCP vì tunnel đang ở chế độ UDP")
+		// return // Allow for multi-protocol
 	}
-	if strings.TrimSpace(id) == "" {
+	if strings.TrimSpace(msg.ID) == "" {
 		return
 	}
 
-	localConn, err := net.Dial("tcp", c.localAddr)
+	// Find correct local address based on remote port
+	localAddr := ""
+	c.tunnelMu.RLock()
+	for _, t := range c.tunnels {
+		if t.RemotePort == msg.RemotePort {
+			localAddr = t.LocalAddr
+			break
+		}
+	}
+	c.tunnelMu.RUnlock()
+
+	if localAddr == "" {
+		log.Printf("[client] không tìm thấy tunnel cho remote port %d", msg.RemotePort)
+		return
+	}
+
+	localConn, err := net.Dial("tcp", localAddr)
 	if err != nil {
-		log.Printf("[client] không kết nối được backend %s: %v", c.localAddr, err)
-		c.reportProxyError(id, err)
+		log.Printf("[client] không kết nối được backend %s: %v", localAddr, err)
+		c.reportProxyError(msg.ID, err)
 		return
 	}
 
@@ -648,7 +656,7 @@ func (c *client) handleProxy(id string) {
 	if err != nil {
 		log.Printf("[client] không connect server cho proxy: %v", err)
 		localConn.Close()
-		c.reportProxyError(id, err)
+		c.reportProxyError(msg.ID, err)
 		return
 	}
 
@@ -657,7 +665,7 @@ func (c *client) handleProxy(id string) {
 		Type:     "proxy",
 		Key:      c.key,
 		ClientID: c.clientID,
-		ID:       id,
+		ID:       msg.ID,
 	}); err != nil {
 		log.Printf("[client] gửi proxy handshake lỗi: %v", err)
 		localConn.Close()
@@ -1602,4 +1610,81 @@ func terminalSize() (int, int) {
 
 func isEOF(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) || strings.Contains(err.Error(), "use of closed network connection")
+}
+
+func (c *client) parseTunnelArg(arg string) tunnel.TunnelConfig {
+	parts := strings.Split(arg, ":")
+
+	protocol := "tcp"
+	localPort := 0
+	remotePort := 0
+
+	switch len(parts) {
+	case 1:
+		// e.g. "80"
+		if p, err := strconv.Atoi(parts[0]); err == nil {
+			localPort = p
+		}
+	case 2:
+		// e.g. "udp:19132" or "80:10500"
+		if p1, err := strconv.Atoi(parts[0]); err == nil {
+			// "80:10500" -> local:remote
+			localPort = p1
+			if p2, err := strconv.Atoi(parts[1]); err == nil {
+				remotePort = p2
+			}
+		} else {
+			// "udp:19132" -> proto:local
+			protocol = strings.ToLower(parts[0])
+			if p2, err := strconv.Atoi(parts[1]); err == nil {
+				localPort = p2
+			}
+		}
+	case 3:
+		// e.g. "tcp:22:10111" -> proto:local:remote
+		protocol = strings.ToLower(parts[0])
+		if p2, err := strconv.Atoi(parts[1]); err == nil {
+			localPort = p2
+		}
+		if p3, err := strconv.Atoi(parts[2]); err == nil {
+			remotePort = p3
+		}
+	}
+
+	if protocol != "udp" && protocol != "http" {
+		protocol = "tcp"
+	}
+
+	// Default local port if not parsed
+	if localPort == 0 {
+		localPort = 80
+	}
+
+	return tunnel.TunnelConfig{
+		Protocol:      protocol,
+		LocalAddr:     net.JoinHostPort("localhost", strconv.Itoa(localPort)),
+		RequestedPort: remotePort,
+	}
+}
+
+func (c *client) isHTTP() bool {
+	c.tunnelMu.RLock()
+	defer c.tunnelMu.RUnlock()
+	for _, t := range c.tunnels {
+		if t.Protocol == "http" {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *client) isUDP() bool {
+	c.tunnelMu.RLock()
+	defer c.tunnelMu.RUnlock()
+	for _, t := range c.tunnels {
+		if t.Protocol == "udp" {
+			return true
+		}
+	}
+	return false
 }
