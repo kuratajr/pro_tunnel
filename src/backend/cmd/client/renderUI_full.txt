@@ -1,0 +1,200 @@
+}
+
+func formatBytes(n uint64) string {
+	return formatBytesFloat(float64(n))
+}
+
+func formatBytesFloat(value float64) string {
+	units := []string{"B", "KB", "MB", "GB", "TB", "PB"}
+	if value < 0 {
+		value = 0
+	}
+	unit := 0
+	for unit < len(units)-1 && value >= 1024 {
+		value /= 1024
+		unit++
+	}
+	switch {
+	case value >= 100:
+		return fmt.Sprintf("%.0f %s", value, units[unit])
+	case value >= 10:
+		return fmt.Sprintf("%.1f %s", value, units[unit])
+	default:
+		return fmt.Sprintf("%.2f %s", value, units[unit])
+	}
+}
+
+type byteCounter struct {
+	counter *uint64
+}
+
+func (b *byteCounter) Write(p []byte) (int, error) {
+	if len(p) > 0 && b.counter != nil {
+		atomic.AddUint64(b.counter, uint64(len(p)))
+	}
+	return len(p), nil
+}
+
+func proxyCopyCount(dst, src net.Conn, counter *uint64) {
+	defer dst.Close()
+	defer src.Close()
+	reader := io.TeeReader(src, &byteCounter{counter: counter})
+	_, _ = io.Copy(dst, reader)
+}
+
+func (c *client) recordPingReply() {
+	sent := atomic.SwapInt64(&c.pingSent, 0)
+	if sent <= 0 {
+		return
+	}
+	ms := time.Since(time.Unix(0, sent))
+	atomic.StoreInt64(&c.pingMs, ms.Milliseconds())
+	if c.pingCh == nil {
+		return
+	}
+	select {
+	case c.pingCh <- ms:
+	default:
+		select {
+		case <-c.pingCh:
+		default:
+		}
+		select {
+		case c.pingCh <- ms:
+		default:
+		}
+	}
+}
+
+func nonEmpty(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func formatPingDisplay(d time.Duration) (string, string) {
+	if d < 0 {
+		return "N/A", "[----]"
+	}
+	ms := d.Milliseconds()
+	var bars string
+	switch {
+	case ms <= 50:
+		bars = "[||||]"
+	case ms <= 120:
+		bars = "[||| ]"
+	case ms <= 250:
+		bars = "[|	pingText, bars := formatPingDisplay(ping)
+	pingColor := green
+
+	// Status line
+	statusLine := func() string {
+		now := time.Now().Format("15:04:05")
+		return fmt.Sprintf(bold+brightCyan+"?"+reset+"  %s Status   : %s%s%s (%s) | %sLog: proxvn.log%s", 
+			statusEmoji, statusColor, bold, statusText, now, yellow, reset)
+	}
+
+	// Helper to create a row with an emoji label
+	makeRow := func(emoji, label, val, color string) string {
+		// Standard visible width for label area is 16
+		// UTF-8 emojis take multi-bytes but usually 2 columns wide
+		labelPart := fmt.Sprintf("%s %-10s", emoji, label)
+		return fmt.Sprintf(bold+brightCyan+"?"+reset+"  %s : %s%s%s", labelPart, color, val, reset)
+	}
+
+	lines := []string{
+		bold + brightCyan + "???????????????????????????????????????????????????????",
+		bold + brightCyan + "?" + reset + bold + "      TrongDev | ProxVN - Tunnel Vi?t Nam Free",
+		bold + brightCyan + "???????????????????????????????????????????????????????",
+		statusLine(),
+		bold + brightCyan + "??? Danh s?ch Tunnels ?????????????????????????????????",
+	}
+
+	// Add each tunnel to the UI
+	c.tunnelMu.RLock()
+	for _, t := range c.tunnels {
+		proto := strings.ToUpper(t.Protocol)
+		local := t.LocalAddr
+		remote := ""
+		if t.Protocol == "http" {
+			domain := c.baseDomain
+			if domain == "" { domain = "vutrungocrong.fun" }
+			remote = fmt.Sprintf("https://%s.%s", t.Subdomain, domain)
+		} else {
+			hostPart, _, _ := net.SplitHostPort(c.serverAddr)
+			remote = fmt.Sprintf("%s:%d", hostPart, t.RemotePort)
+		}
+		
+		row := fmt.Sprintf(bold+brightCyan+"?"+reset+"  %-4s | %-20s -> %s", proto, local, remote)
+		lines = append(lines, row)
+	}
+	c.tunnelMu.RUnlock()
+
+	lines = append(lines, []string{
+		bold + brightCyan + "???????????????????????????????????????????????????????",
+		func() string {
+			v1 := fmt.Sprintf("??  %s%s/s%s", green, stats.upRate, reset)
+			v2 := fmt.Sprintf("??  %s%s/s%s", blue, stats.downRate, reset)
+			return fmt.Sprintf(bold+brightCyan+"?"+reset+"  ?? Traffic  : %s %s", v1, v2)
+		}(),
+		func() string {
+			return fmt.Sprintf(bold+brightCyan+"?"+reset+"  ?? Total    : %s%s%s ?  %s%s%s ?", cyan, stats.totalUp, reset, cyan, stats.totalDown, reset)
+		}(),
+		func() string {
+			ac := strconv.Itoa(activeSessions)
+			to := strconv.FormatUint(totalSessions, 10)
+			return fmt.Sprintf(bold+brightCyan+"?"+reset+"  ?? Sessions : active %s%s%s | total %s%s%s", yellow, ac, reset, cyan, to, reset)
+		}(),
+		func() string {
+			return fmt.Sprintf(bold+brightCyan+"?"+reset+"  ?? Ping     : %s%s %s%s", pingColor, pingText, bars, reset)
+		}(),
+		makeRow("??", "Key", nonEmpty(c.key, "(none)"), yellow),
+		makeRow("??", "Version", tunnel.Version, magenta),
+		bold + brightCyan + "???????????????????????????????????????????????????????",
+	}...)
+??????????????????????????????????????????????????????",
+		func() string {
+			v1 := fmt.Sprintf("??  %s%s/s%s", green, stats.upRate, reset)
+			v2 := fmt.Sprintf("??  %s%s/s%s", blue, stats.downRate, reset)
+			return fmt.Sprintf(bold+brightCyan+"?"+reset+"  ?? Traffic  : %s %s", v1, v2)
+		}(),
+		func() string {
+			return fmt.Sprintf(bold+brightCyan+"?"+reset+"  ?? Total    : %s%s%s ?  %s%s%s ?", cyan, stats.totalUp, reset, cyan, stats.totalDown, reset)
+		}(),
+		func() string {
+			ac := strconv.Itoa(activeSessions)
+			to := strconv.FormatUint(totalSessions, 10)
+			return fmt.Sprintf(bold+brightCyan+"?"+reset+"  ?? Sessions : active %s%s%s | total %s%s%s", yellow, ac, reset, cyan, to, reset)
+		}(),
+		func() string {
+			return fmt.Sprintf(bold+brightCyan+"?"+reset+"  ?? Ping     : %s%s %s%s", pingColor, pingText, bars, reset)
+		}(),
+		makeRow("??", "Key", nonEmpty(c.key, "(none)"), yellow),
+		makeRow("??", "Version", tunnel.Version, magenta),
+		bold + brightCyan + "???????????????????????????????????????????????????????",
+		"",
+		cyan + "  Press 'q' or ESC to quit" + reset,
+	}
+
+	if c.uiEnabled {
+		var builder strings.Builder
+
+		// Move cursor to top-left (Home)
+		builder.WriteString("\033[H")
+
+		// Write all lines
+		for _, line := range lines {
+			builder.WriteString(line)
+			builder.WriteByte('\n')
+		}
+
+		// Clear from cursor to end of screen (cleans up any partial leftovers from prev frame)
+		builder.WriteString("\033[J")
+
+		// Print everything in one go to minimize tearing/scrolling artifacts
+		fmt.Print(builder.String())
+	}
+}
+
+func terminalSize() (int, int) {

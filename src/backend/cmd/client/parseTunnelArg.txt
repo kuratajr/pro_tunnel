@@ -1,0 +1,76 @@
+func (c *client) parseTunnelArg(arg string) tunnel.TunnelConfig {
+	parts := strings.Split(arg, ":")
+
+	protocol := "tcp"
+	localPort := 0
+	remotePort := 0
+
+	switch len(parts) {
+	case 1:
+		// e.g. "80"
+		if p, err := strconv.Atoi(parts[0]); err == nil {
+			localPort = p
+		}
+	case 2:
+		// e.g. "udp:19132" or "80:10500"
+		if p1, err := strconv.Atoi(parts[0]); err == nil {
+			// "80:10500" -> local:remote
+			localPort = p1
+			if p2, err := strconv.Atoi(parts[1]); err == nil {
+				remotePort = p2
+			}
+		} else {
+			// "udp:19132" -> proto:local
+			protocol = strings.ToLower(parts[0])
+			if p2, err := strconv.Atoi(parts[1]); err == nil {
+				localPort = p2
+			}
+		}
+	case 3:
+		// e.g. "tcp:22:10111" -> proto:local:remote
+		protocol = strings.ToLower(parts[0])
+		if p2, err := strconv.Atoi(parts[1]); err == nil {
+			localPort = p2
+		}
+		if p3, err := strconv.Atoi(parts[2]); err == nil {
+			remotePort = p3
+		}
+	}
+
+	if protocol != "udp" && protocol != "http" {
+		protocol = "tcp"
+	}
+
+	// Default local port if not parsed
+	if localPort == 0 {
+		localPort = 80
+	}
+
+	return tunnel.TunnelConfig{
+		Protocol:      protocol,
+		LocalAddr:     net.JoinHostPort("localhost", strconv.Itoa(localPort)),
+		RequestedPort: remotePort,
+	}
+}
+
+func (c *client) isHTTP() bool {
+	c.tunnelMu.RLock()
+	defer c.tunnelMu.RUnlock()
+	for _, t := range c.tunnels {
+		if t.Protocol == "http" {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *client) isUDP() bool {
+	c.tunnelMu.RLock()
+	defer c.tunnelMu.RUnlock()
+	for _, t := range c.tunnels {
+		if t.Protocol == "udp" {
+			return true
+		}
+	}
+	return false
+}

@@ -157,48 +157,69 @@ func main() {
 	// Custom usage message with examples
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `
-ProxVN v%s - Client
+╔════════════════════════════════════════════════════════════════════════════╗
+║                 ProxVN v%s - Client                                   ║
+║            Tunnel Localhost ra Internet - Miễn Phí 100%%                   ║
+╚════════════════════════════════════════════════════════════════════════════╝
 
-USAGE:
-  proxvn [OPTIONS] [TUNNEL...]
+🌟 TÍNH NĂNG:
+  • HTTP Tunnel:  Nhận subdomain HTTPS tự động (https://abc.domain.com)
+  • TCP Tunnel:   Public bất kỳ service TCP nào (Web, SSH, RDP, Database...)
+  • UDP Tunnel:   Cho game server (Minecraft PE, CS:GO, Palworld...)
+  • File Sharing: Chia sẻ file/folder như Windows Network Share
+  • TLS Security: Mã hóa end-to-end cho tất cả kết nối
+  • Auto Reconnect: Tự động kết nối lại khi mất mạng
 
-TUNNEL formats:
-  - tcp:LOCAL(:REMOTE)?      ex: tcp:22:10111, tcp:3306
-  - udp:LOCAL(:REMOTE)?      ex: udp:19132, udp:53:1053
-  - http:LOCAL               ex: http:80, http:3000
-  - LOCAL                    (= tcp:LOCAL, REMOTE auto)
-  - LOCAL:REMOTE             (= tcp:LOCAL:REMOTE)
+📖 CÚ PHÁP:
+  proxvn [OPTIONS] [LOCAL_PORT]
 
-OPTIONS:
+⚙️  CÁC THAM SỐ:
 `, tunnel.Version)
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, `
-EXAMPLES:
-  # HTTP (subdomain)
-  proxvn http:80
-  proxvn http:3000
+💡 VÍ DỤ SỬ DỤNG:
 
-  # TCP (port)
-  proxvn 22
-  proxvn 80:10080
-  proxvn tcp:22:10111
+▶ HTTP Tunnel - Nhận Subdomain HTTPS:
+  proxvn --proto http 80              # Share website port 80
+  proxvn --proto http 3000            # Share Node.js/React app
+  proxvn --proto http 443             # Tunnel local HTTPS site
+  → Kết quả: https://abc123.vutrungocrong.fun
 
-  # UDP (port)
-  proxvn udp:19132
-  proxvn udp:53:1053
+▶ TCP Tunnel - Nhận IP:Port:
+  proxvn 80                           # Public web server
+  proxvn 3389                         # Remote Desktop (RDP)
+  proxvn 22                           # SSH server
+  → Kết quả: 103.77.246.206:10000
 
-  # Multiport (space-separated args)
-  proxvn http:3000 tcp:22:10111 udp:19132 3306:13306
+▶ UDP Tunnel - Game Server:
+  proxvn --proto udp 19132            # Minecraft Bedrock Edition
+  proxvn --proto udp 25565            # Minecraft Java (UDP mode)
+  proxvn --proto udp 7777             # Palworld server
+  → Kết quả: 103.77.246.206:10000
 
-  # File share
-  proxvn --file /home/user/Documents --pass YOUR_PASS
-  proxvn --file "C:\Projects" --pass YOUR_PASS
+▶ File Sharing - Chia Sẻ File/Folder:
+  proxvn --file /home/user/Documents --pass matkhau123
+  proxvn --file "C:\\Projects" --pass abc123         # Windows
+  proxvn --file ~/Downloads --pass secret --permissions r  # Read-only
+  → Kết quả: Mount như ổ đĩa mạng (Z:\\) hoặc truy cập qua web
+
+▶ Kết nối tới VPS riêng:
+  proxvn --server YOUR_VPS_IP:8882 --proto http 80
+
+🔗 THÔNG TIN:
+  • Website:        https://vutrungocrong.fun
+  • Documentation:  https://github.com/hoangtuvungcao/proxvn_tunnel
+  • Issues:         https://github.com/hoangtuvungcao/proxvn_tunnel/issues
+
+© 2026 ProxVN - Developed by TrongDev
+Licensed under FREE TO USE - NON-COMMERCIAL ONLY
+
 `)
 	}
 
-	serverAddr := flag.String("server", defaultServerAddr, "??a ch? tunnel server (m?c ??nh: 103.77.246.206:8882)")
-	hostFlag := flag.String("host", defaultLocalHost, "Host n?i b? c?n tunnel (m?c ??nh: localhost)")
-	portFlag := flag.Int("port", defaultLocalPort, "Local port (overridden if provided as positional tunnel arg)")
+	serverAddr := flag.String("server", defaultServerAddr, "Địa chỉ tunnel server (mặc định: 103.77.246.206:8882)")
+	hostFlag := flag.String("host", defaultLocalHost, "Host nội bộ cần tunnel (mặc định: localhost)")
+	portFlag := flag.Int("port", defaultLocalPort, "Port nội bộ (bị ghi đè nếu truyền trực tiếp)")
 	id := flag.String("id", "", "Client ID (optional)")
 	proto := flag.String("proto", "tcp", "Protocol: tcp, udp, or http")
 	UI := flag.Bool("ui", true, "Enable TUI (disable with --ui=false)")
@@ -206,10 +227,10 @@ EXAMPLES:
 	insecure := flag.Bool("insecure", false, "Skip TLS certificate verification (for testing with localhost)")
 
 	// File sharing flags
-	fileFlag := flag.String("file", "", "???ng d?n file/folder c?n chia s? (vd: /home/user/docs, C:\\\\Users\\\\Admin\\\\Documents)")
-	userFlag := flag.String("user", "proxvn", "Username ?? truy c?p file share (m?c ??nh: proxvn)")
-	passFlag := flag.String("pass", "", "Password for file share (required with --file)")
-	permsFlag := flag.String("permissions", "rw", "Quy?n h?n: r (ch? ??c), rw (??c-ghi), rwx (??y ??)")
+	fileFlag := flag.String("file", "", "Đường dẫn file/folder cần chia sẻ (vd: /home/user/docs, C:\\\\Users\\\\Admin\\\\Documents)")
+	userFlag := flag.String("user", "proxvn", "Username để truy cập file share (mặc định: proxvn)")
+	passFlag := flag.String("pass", "", "Mật khẩu để truy cập file share (bắt buộc khi dùng --file)")
+	permsFlag := flag.String("permissions", "rw", "Quyền hạn: r (chỉ đọc), rw (đọc-ghi), rwx (đầy đủ)")
 
 	flag.Parse()
 
@@ -219,7 +240,7 @@ EXAMPLES:
 	// Check if file sharing mode
 	if *fileFlag != "" {
 		if *passFlag == "" {
-			log.Fatal("Error: --pass is required when using --file")
+			log.Fatal("❌ Lỗi: --pass bắt buộc khi dùng --file")
 		}
 		// Trim spaces to prevent auth errors
 		username := strings.TrimSpace(*userFlag)
@@ -227,7 +248,7 @@ EXAMPLES:
 		perms := strings.TrimSpace(*permsFlag)
 
 		if err := runFileShareMode(*fileFlag, username, password, perms, *serverAddr, *insecure); err != nil {
-			log.Fatalf("? File sharing l?i: %v", err)
+			log.Fatalf("❌ File sharing lỗi: %v", err)
 		}
 		return
 	}
@@ -277,33 +298,27 @@ EXAMPLES:
 		})
 	} else {
 		for _, arg := range args {
-			cfg, err := parseTunnelArg(arg, localHost)
-			if err != nil {
-				// Show custom usage + a short error summary
-				flag.Usage()
-				log.Fatalf("Invalid tunnel arg %q: %v", arg, err)
-			}
-			cl.tunnels = append(cl.tunnels, cfg)
+			cl.tunnels = append(cl.tunnels, cl.parseTunnelArg(arg))
 		}
 	}
 
 	if err := cl.run(); err != nil {
-		log.Fatalf("[client] l?i: %v", err)
+		log.Fatalf("[client] lỗi: %v", err)
 	}
 }
 
 func (c *client) run() error {
-	// FIX: Exponential backoff to avoid reconnect spam
+	// ✅ FIX: Exponential backoff để tránh spam reconnect
 	backoff := 3 * time.Second
 	maxBackoff := 5 * time.Minute
 
 	for {
 		if err := c.connectControl(); err != nil {
-			log.Printf("[client] k?t n?i control th?t b?i: %v", err)
+			log.Printf("[client] kết nối control thất bại: %v", err)
 			log.Printf("[client] retry sau %v...", backoff)
 			time.Sleep(backoff)
 
-			// Exponential backoff: double each fail, max 5 minutes
+			// ✅ Exponential backoff: double mỗi lần fail, max 5 phút
 			backoff *= 2
 			if backoff > maxBackoff {
 				backoff = maxBackoff
@@ -311,18 +326,18 @@ func (c *client) run() error {
 			continue
 		}
 
-		// Reset backoff on successful connect
+		// ✅ Reset backoff khi kết nối thành công
 		backoff = 3 * time.Second
 
 		if err := c.receiveLoop(); err != nil {
-			log.Printf("[client] control l?i: %v", err)
+			log.Printf("[client] control lỗi: %v", err)
 		}
 		c.closeControl()
 		if atomic.LoadUint32(&c.exitFlag) == 1 {
 			return nil
 		}
 
-		log.Printf("[client] th? reconnect control...")
+		log.Printf("[client] thử reconnect control...")
 		time.Sleep(backoff)
 	}
 }
@@ -394,7 +409,7 @@ func (c *client) connectControl() error {
 		return err
 	}
 	if resp.Type != "registered" {
-		return fmt.Errorf("register failed: %+v", resp)
+		return fmt.Errorf("đăng ký thất bại: %+v", resp)
 	}
 	if strings.TrimSpace(resp.Key) != "" {
 		c.key = strings.TrimSpace(resp.Key)
@@ -437,9 +452,9 @@ func (c *client) connectControl() error {
 	c.tunnelMu.RLock()
 	for _, t := range c.tunnels {
 		if t.Protocol == "http" {
-			log.Printf("[client] ? HTTP Tunnel Active: https://%s.%s -> %s", t.Subdomain, c.baseDomain, t.LocalAddr)
+			log.Printf("[client] ✅ HTTP Tunnel Active: https://%s.%s -> %s", t.Subdomain, c.baseDomain, t.LocalAddr)
 		} else {
-			log.Printf("[client] ? %s Tunnel Active: port %d -> %s", strings.ToUpper(t.Protocol), t.RemotePort, t.LocalAddr)
+			log.Printf("[client] ✅ %s Tunnel Active: port %d -> %s", strings.ToUpper(t.Protocol), t.RemotePort, t.LocalAddr)
 		}
 	}
 	c.tunnelMu.RUnlock()
@@ -447,7 +462,7 @@ func (c *client) connectControl() error {
 	if c.isUDP() {
 		c.setUDPCtrlStatus("offline")
 		if err := c.setupUDPChannel(); err != nil {
-			log.Printf("[client] thi?t l?p UDP control l?i: %v", err)
+			log.Printf("[client] thiết lập UDP control lỗi: %v", err)
 		}
 	}
 	go c.heartbeatLoop()
@@ -482,9 +497,9 @@ func (c *client) receiveLoop() error {
 			// Handle HTTP request
 			go c.handleHTTPRequest(msg)
 		case "error":
-			log.Printf("[client] server error: %s", msg.Error)
+			log.Printf("[client] server báo lỗi: %s", msg.Error)
 		default:
-			log.Printf("[client] unsupported message: %+v", msg)
+			log.Printf("[client] thông điệp không hỗ trợ: %+v", msg)
 		}
 	}
 }
@@ -613,7 +628,7 @@ func (c *client) displayLoop() {
 
 func (c *client) handleProxy(msg tunnel.Message) {
 	if c.isUDP() && !c.isHTTP() { // Simple check, better to check specific tunnel in future
-		// log.Printf("[client] skip TCP proxy when running UDP-only tunnel")
+		// log.Printf("[client] bỏ qua proxy TCP vì tunnel đang ở chế độ UDP")
 		// return // Allow for multi-protocol
 	}
 	if strings.TrimSpace(msg.ID) == "" {
@@ -632,13 +647,13 @@ func (c *client) handleProxy(msg tunnel.Message) {
 	c.tunnelMu.RUnlock()
 
 	if localAddr == "" {
-		log.Printf("[client] tunnel not found for remote port %d", msg.RemotePort)
+		log.Printf("[client] không tìm thấy tunnel cho remote port %d", msg.RemotePort)
 		return
 	}
 
 	localConn, err := net.Dial("tcp", localAddr)
 	if err != nil {
-		log.Printf("[client] failed to connect backend %s: %v", localAddr, err)
+		log.Printf("[client] không kết nối được backend %s: %v", localAddr, err)
 		c.reportProxyError(msg.ID, err)
 		return
 	}
@@ -650,7 +665,7 @@ func (c *client) handleProxy(msg tunnel.Message) {
 	tlsConfig := c.buildTLSConfig()
 	srvConn, err := tls.Dial("tcp", c.serverAddr, tlsConfig)
 	if err != nil {
-		log.Printf("[client] failed to connect server for proxy: %v", err)
+		log.Printf("[client] không connect server cho proxy: %v", err)
 		localConn.Close()
 		c.reportProxyError(msg.ID, err)
 		return
@@ -663,7 +678,7 @@ func (c *client) handleProxy(msg tunnel.Message) {
 		ClientID: c.clientID,
 		ID:       msg.ID,
 	}); err != nil {
-		log.Printf("[client] g?i proxy handshake l?i: %v", err)
+		log.Printf("[client] gửi proxy handshake lỗi: %v", err)
 		localConn.Close()
 		srvConn.Close()
 		return
@@ -688,13 +703,13 @@ func (c *client) handleUDPOpen(msg tunnel.Message) {
 	}
 	backend, err := c.resolveBackendUDP()
 	if err != nil {
-		log.Printf("[client] resolve backend UDP l?i: %v", err)
+		log.Printf("[client] resolve backend UDP lỗi: %v", err)
 		c.sendUDPClose(msg.ID)
 		return
 	}
 	conn, err := net.DialUDP("udp", nil, backend)
 	if err != nil {
-		log.Printf("[client] failed to connect UDP backend %s: %v", backend, err)
+		log.Printf("[client] không kết nối được backend UDP %s: %v", backend, err)
 		c.sendUDPClose(msg.ID)
 		return
 	}
@@ -748,9 +763,9 @@ func (c *client) setupUDPChannel() error {
 	go c.readUDPControl(conn)
 	for i := 0; i < 3; i++ {
 		if err := c.sendUDPHandshake(); err != nil {
-			log.Printf("[client] g?i UDP handshake burst #%d l?i: %v", i+1, err)
+			log.Printf("[client] gửi UDP handshake burst #%d lỗi: %v", i+1, err)
 		} else if debugUDP {
-			log.Printf("[client] g?i UDP handshake burst #%d t?i %s", i+1, addr)
+			log.Printf("[client] gửi UDP handshake burst #%d tới %s", i+1, addr)
 		}
 		if i < 2 {
 			time.Sleep(50 * time.Millisecond)
@@ -767,7 +782,7 @@ func (c *client) readUDPControl(conn *net.UDPConn) {
 		n, err := conn.Read(buf)
 		if err != nil {
 			if !errors.Is(err, net.ErrClosed) {
-				log.Printf("[client] ??c UDP control l?i: %v", err)
+				log.Printf("[client] đọc UDP control lỗi: %v", err)
 			}
 			return
 		}
@@ -807,7 +822,7 @@ func (c *client) handleUDPControlPacket(packet []byte) {
 	case udpMsgHandshake:
 		c.udpMu.Lock()
 		if !c.udpReady && debugUDP {
-			log.Printf("[client] UDP control handshake OK from %s", c.serverAddr)
+			log.Printf("[client] UDP control handshake thành công từ %s", c.serverAddr)
 		}
 		c.udpReady = true
 		c.udpMu.Unlock()
@@ -842,7 +857,7 @@ func (c *client) handleUDPDataPacket(id string, payload []byte) {
 		decrypted, err := tunnel.DecryptUDP(c.udpSecret, payload)
 		if err != nil {
 			if debugUDP {
-				log.Printf("[client] UDP decrypt failed: %v", err)
+				log.Printf("[client] giải mã UDP thất bại: %v", err)
 			}
 			return
 		}
@@ -855,13 +870,13 @@ func (c *client) handleUDPDataPacket(id string, payload []byte) {
 	}
 	c.markServerData()
 	if _, err := sess.conn.Write(payload); err != nil {
-		log.Printf("[client] write UDP backend error: %v", err)
+		log.Printf("[client] ghi về backend UDP lỗi: %v", err)
 		c.removeUDPSession(id, true)
 		return
 	}
 	c.startBackendWait(id)
 	if debugUDP {
-		log.Printf("[client] received %d UDP bytes from server for session %s", len(payload), id)
+		log.Printf("[client] nhận %d bytes UDP từ server cho phiên %s", len(payload), id)
 	}
 	atomic.AddUint64(&c.bytesDown, uint64(len(payload)))
 }
@@ -872,7 +887,7 @@ func (c *client) readFromUDPLocal(sess *udpClientSession) {
 		n, err := sess.conn.Read(buf)
 		if err != nil {
 			if !errors.Is(err, net.ErrClosed) {
-				log.Printf("[client] read UDP backend error: %v", err)
+				log.Printf("[client] đọc UDP backend lỗi: %v", err)
 			}
 			break
 		}
@@ -911,14 +926,14 @@ func (c *client) handleBackendTimeout(id string) {
 		sess.idleCount++
 		if sess.idleCount < backendIdleRetries {
 			if debugUDP {
-				log.Printf("[client] backend session %s (remote %s) no reply (%d/%d)", id, remote, sess.idleCount, backendIdleRetries)
+				log.Printf("[client] backend phiên %s (remote %s) chưa phản hồi (%d/%d)", id, remote, sess.idleCount, backendIdleRetries)
 			}
 			// restart timer
 			c.startBackendWait(id)
 			return
 		}
 	}
-	log.Printf("[client] backend no reply for session %s (remote %s) - closing", id, remote)
+	log.Printf("[client] backend không phản hồi cho phiên %s (remote %s) - đóng phiên", id, remote)
 	if c.enc != nil {
 		_ = c.enc.Encode(tunnel.Message{Type: "udp_idle", ID: id, Protocol: "udp"})
 	}
@@ -1015,14 +1030,14 @@ func (c *client) sendUDPData(id string, payload []byte) {
 	if c.udpSecret != nil {
 		encrypted, err := tunnel.EncryptUDP(c.udpSecret, payload)
 		if err != nil {
-			log.Printf("[client] UDP encrypt error: %v", err)
+			log.Printf("[client] mã hóa UDP lỗi: %v", err)
 			return
 		}
 		payload = encrypted
 	}
 
 	if err := c.writeUDP(udpMsgData, id, payload); err != nil {
-		log.Printf("[client] send udp_data error: %v", err)
+		log.Printf("[client] gửi udp_data lỗi: %v", err)
 		return
 	}
 	atomic.AddUint64(&c.bytesUp, uint64(len(payload)))
@@ -1030,7 +1045,7 @@ func (c *client) sendUDPData(id string, payload []byte) {
 
 func (c *client) sendUDPClose(id string) {
 	if err := c.writeUDP(udpMsgClose, id, nil); err != nil {
-		log.Printf("[client] send udp_close error: %v", err)
+		log.Printf("[client] gửi udp_close lỗi: %v", err)
 	}
 	if c.enc != nil {
 		_ = c.enc.Encode(tunnel.Message{Type: "udp_close", ID: id, Protocol: "udp"})
@@ -1047,7 +1062,7 @@ func (c *client) sendUDPPing(payload []byte) error {
 
 func (c *client) sendUDPPong(payload []byte) {
 	if err := c.writeUDP(udpMsgPong, "", payload); err != nil && debugUDP {
-		log.Printf("[client] send udp_pong error: %v", err)
+		log.Printf("[client] gửi udp_pong lỗi: %v", err)
 	}
 }
 
@@ -1071,7 +1086,7 @@ func (c *client) udpHandshakeRetry() {
 		c.udpMu.Unlock()
 		if ready || !connPresent {
 			if attempts > 0 && ready {
-				log.Printf("[client] UDP handshake OK after %d attempts (%d ms)", attempts+1, attempts*int(retryInterval/time.Millisecond))
+				log.Printf("[client] UDP handshake thành công sau %d lần thử (%d ms)", attempts+1, attempts*int(retryInterval/time.Millisecond))
 			}
 			return
 		}
@@ -1079,7 +1094,7 @@ func (c *client) udpHandshakeRetry() {
 		case <-ticker.C:
 			attempts++
 			if attempts > maxRetries {
-				log.Printf("[client] UDP handshake failed after %d attempts", maxRetries)
+				log.Printf("[client] UDP handshake thất bại sau %d lần thử", maxRetries)
 				c.udpMu.Lock()
 				if c.udpConn != nil {
 					c.udpConn.Close()
@@ -1091,13 +1106,13 @@ func (c *client) udpHandshakeRetry() {
 			}
 			if err := c.sendUDPHandshake(); err != nil {
 				if debugUDP {
-					log.Printf("[client] retry handshake #%d error: %v", attempts, err)
+					log.Printf("[client] retry handshake #%d lỗi: %v", attempts, err)
 				}
 			} else if debugUDP {
 				log.Printf("[client] retry handshake #%d/%d", attempts, maxRetries)
 			}
 		case <-timeout.C:
-			log.Printf("[client] UDP handshake timeout after %v", handshakeTimeout)
+			log.Printf("[client] UDP handshake timeout sau %v", handshakeTimeout)
 			c.udpMu.Lock()
 			if c.udpConn != nil {
 				c.udpConn.Close()
@@ -1119,17 +1134,17 @@ func (c *client) writeUDP(msgType byte, id string, payload []byte) error {
 	ready := c.udpReady
 	c.udpMu.Unlock()
 	if conn == nil {
-		return errors.New("udp ch?a s?n s�ng")
+		return errors.New("udp chưa sẵn sàng")
 	}
 	if !ready && msgType != udpMsgHandshake && msgType != udpMsgPing {
 		if debugUDP {
-			log.Printf("[client] c?nh b�o: g?i UDP khi handshake ch?a ho�n t?t (msg=%d)", msgType)
+			log.Printf("[client] cảnh báo: gửi UDP khi handshake chưa hoàn tất (msg=%d)", msgType)
 		}
 	}
 	buf := buildUDPMessage(msgType, key, id, payload)
 	_, err := conn.Write(buf)
 	if debugUDP && err == nil && msgType != udpMsgHandshake && !ready {
-		log.Printf("[client] c?nh b�o: g?i UDP nh?ng handshake ch?a ???c x�c nh?n")
+		log.Printf("[client] cảnh báo: gửi UDP nhưng handshake chưa được xác nhận")
 	}
 	return err
 }
@@ -1176,7 +1191,7 @@ func (c *client) udpPingLoop(ticker *time.Ticker, stopCh chan struct{}) {
 			c.udpLastPing = ts
 			c.udpCtrlMu.Unlock()
 			if err := c.sendUDPPing(payload); err != nil && debugUDP {
-				log.Printf("[client] g?i udp_ping l?i: %v", err)
+				log.Printf("[client] gửi udp_ping lỗi: %v", err)
 			}
 			c.checkUDPPingTimeout()
 		case <-stopCh:
@@ -1211,7 +1226,7 @@ func (c *client) checkUDPPingTimeout() {
 func (c *client) handleUDPPong(payload []byte) {
 	if len(payload) < 8 {
 		if debugUDP {
-			log.Printf("[client] udp_pong payload qu� ng?n")
+			log.Printf("[client] udp_pong payload quá ngắn")
 		}
 		return
 	}
@@ -1224,7 +1239,7 @@ func (c *client) handleUDPPong(payload []byte) {
 	c.udpCtrlMu.Unlock()
 	c.setUDPCtrlStatus(fmt.Sprintf("ok (%d ms)", rtt.Milliseconds()))
 	if debugUDP {
-		log.Printf("[client] nh?n udp_pong, rtt %d ms", rtt.Milliseconds())
+		log.Printf("[client] nhận udp_pong, rtt %d ms", rtt.Milliseconds())
 	}
 }
 
@@ -1463,67 +1478,122 @@ func formatPingDisplay(d time.Duration) (string, string) {
 		return "N/A", "[----]"
 	}
 	ms := d.Milliseconds()
+	var bars string
 	switch {
 	case ms <= 50:
-		return fmt.Sprintf("%dms", ms), "[||||]"
+		bars = "[||||]"
 	case ms <= 120:
-		return fmt.Sprintf("%dms", ms), "[||| ]"
+		bars = "[||| ]"
 	case ms <= 250:
-		return fmt.Sprintf("%dms", ms), "[||  ]"
-	default:
-		return fmt.Sprintf("%dms", ms), "[|   ]"
+		bars = "[|	pingText, bars := formatPingDisplay(ping)
+	pingColor := green
+
+	// Status line
+	statusLine := func() string {
+		now := time.Now().Format("15:04:05")
+		return fmt.Sprintf(bold+brightCyan+"║"+reset+"  %s Status   : %s%s%s (%s) | %sLog: proxvn.log%s", 
+			statusEmoji, statusColor, bold, statusText, now, yellow, reset)
 	}
-}
 
-func (c *client) renderFrame(stats trafficStats, ping time.Duration) {
-	pingText, bars := formatPingDisplay(ping)
-
-	hostPart := c.serverAddr
-	if h, _, err := net.SplitHostPort(c.serverAddr); err == nil {
-		hostPart = h
+	// Helper to create a row with an emoji label
+	makeRow := func(emoji, label, val, color string) string {
+		// Standard visible width for label area is 16
+		// UTF-8 emojis take multi-bytes but usually 2 columns wide
+		labelPart := fmt.Sprintf("%s %-10s", emoji, label)
+		return fmt.Sprintf(bold+brightCyan+"║"+reset+"  %s : %s%s%s", labelPart, color, val, reset)
 	}
 
 	lines := []string{
-		"ProxVN - Client",
-		"",
-		"Tunnels:",
+		bold + brightCyan + "╔══════════════════════════════════════════════════════",
+		bold + brightCyan + "║" + reset + bold + "      TrongDev | ProxVN - Tunnel Việt Nam Free",
+		bold + brightCyan + "╠══════════════════════════════════════════════════════",
+		statusLine(),
+		bold + brightCyan + "╠══ Danh sách Tunnels ═════════════════════════════════",
 	}
 
+	// Add each tunnel to the UI
 	c.tunnelMu.RLock()
 	for _, t := range c.tunnels {
+		proto := strings.ToUpper(t.Protocol)
 		local := t.LocalAddr
 		remote := ""
 		if t.Protocol == "http" {
 			domain := c.baseDomain
-			if strings.TrimSpace(domain) == "" {
-				domain = "vutrungocrong.fun"
-			}
+			if domain == "" { domain = "vutrungocrong.fun" }
 			remote = fmt.Sprintf("https://%s.%s", t.Subdomain, domain)
 		} else {
+			hostPart, _, _ := net.SplitHostPort(c.serverAddr)
 			remote = fmt.Sprintf("%s:%d", hostPart, t.RemotePort)
 		}
-		lines = append(lines, fmt.Sprintf("  %-4s %s -> %s", strings.ToUpper(t.Protocol), local, remote))
+		
+		row := fmt.Sprintf(bold+brightCyan+"║"+reset+"  %-4s | %-20s -> %s", proto, local, remote)
+		lines = append(lines, row)
 	}
 	c.tunnelMu.RUnlock()
 
-	lines = append(lines,
+	lines = append(lines, []string{
+		bold + brightCyan + "╠══════════════════════════════════════════════════════",
+		func() string {
+			v1 := fmt.Sprintf("⬆️  %s%s/s%s", green, stats.upRate, reset)
+			v2 := fmt.Sprintf("⬇️  %s%s/s%s", blue, stats.downRate, reset)
+			return fmt.Sprintf(bold+brightCyan+"║"+reset+"  📊 Traffic  : %s %s", v1, v2)
+		}(),
+		func() string {
+			return fmt.Sprintf(bold+brightCyan+"║"+reset+"  📈 Total    : %s%s%s ↑  %s%s%s ↓", cyan, stats.totalUp, reset, cyan, stats.totalDown, reset)
+		}(),
+		func() string {
+			ac := strconv.Itoa(activeSessions)
+			to := strconv.FormatUint(totalSessions, 10)
+			return fmt.Sprintf(bold+brightCyan+"║"+reset+"  🔌 Sessions : active %s%s%s | total %s%s%s", yellow, ac, reset, cyan, to, reset)
+		}(),
+		func() string {
+			return fmt.Sprintf(bold+brightCyan+"║"+reset+"  🏓 Ping     : %s%s %s%s", pingColor, pingText, bars, reset)
+		}(),
+		makeRow("🔐", "Key", nonEmpty(c.key, "(none)"), yellow),
+		makeRow("⚙️", "Version", tunnel.Version, magenta),
+		bold + brightCyan + "╚══════════════════════════════════════════════════════",
+	}...)
+��════════════════════════════════════════════════════",
+		func() string {
+			v1 := fmt.Sprintf("⬆️  %s%s/s%s", green, stats.upRate, reset)
+			v2 := fmt.Sprintf("⬇️  %s%s/s%s", blue, stats.downRate, reset)
+			return fmt.Sprintf(bold+brightCyan+"║"+reset+"  📊 Traffic  : %s %s", v1, v2)
+		}(),
+		func() string {
+			return fmt.Sprintf(bold+brightCyan+"║"+reset+"  📈 Total    : %s%s%s ↑  %s%s%s ↓", cyan, stats.totalUp, reset, cyan, stats.totalDown, reset)
+		}(),
+		func() string {
+			ac := strconv.Itoa(activeSessions)
+			to := strconv.FormatUint(totalSessions, 10)
+			return fmt.Sprintf(bold+brightCyan+"║"+reset+"  🔌 Sessions : active %s%s%s | total %s%s%s", yellow, ac, reset, cyan, to, reset)
+		}(),
+		func() string {
+			return fmt.Sprintf(bold+brightCyan+"║"+reset+"  🏓 Ping     : %s%s %s%s", pingColor, pingText, bars, reset)
+		}(),
+		makeRow("🔐", "Key", nonEmpty(c.key, "(none)"), yellow),
+		makeRow("⚙️", "Version", tunnel.Version, magenta),
+		bold + brightCyan + "╚══════════════════════════════════════════════════════",
 		"",
-		fmt.Sprintf("Traffic: up %s/s | down %s/s", stats.upRate, stats.downRate),
-		fmt.Sprintf("Total  : up %s | down %s", stats.totalUp, stats.totalDown),
-		fmt.Sprintf("Ping   : %s %s", pingText, bars),
-		fmt.Sprintf("Key    : %s", nonEmpty(c.key, "(none)")),
-		fmt.Sprintf("Version: %s", tunnel.Version),
-	)
+		cyan + "  Press 'q' or ESC to quit" + reset,
+	}
 
 	if c.uiEnabled {
-		var b strings.Builder
-		b.WriteString("\033[H")
+		var builder strings.Builder
+
+		// Move cursor to top-left (Home)
+		builder.WriteString("\033[H")
+
+		// Write all lines
 		for _, line := range lines {
-			b.WriteString(line)
-			b.WriteByte('\n')
+			builder.WriteString(line)
+			builder.WriteByte('\n')
 		}
-		b.WriteString("\033[J")
-		fmt.Print(b.String())
+
+		// Clear from cursor to end of screen (cleans up any partial leftovers from prev frame)
+		builder.WriteString("\033[J")
+
+		// Print everything in one go to minimize tearing/scrolling artifacts
+		fmt.Print(builder.String())
 	}
 }
 
@@ -1540,97 +1610,59 @@ func isEOF(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) || strings.Contains(err.Error(), "use of closed network connection")
 }
 
-func parseTunnelArg(arg string, defaultHost string) (tunnel.TunnelConfig, error) {
-	arg = strings.TrimSpace(arg)
-	if arg == "" {
-		return tunnel.TunnelConfig{}, fmt.Errorf("empty arg")
-	}
-
+func (c *client) parseTunnelArg(arg string) tunnel.TunnelConfig {
 	parts := strings.Split(arg, ":")
-	if len(parts) > 3 {
-		return tunnel.TunnelConfig{}, fmt.Errorf("too many ':' (max 2)")
-	}
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
-		if parts[i] == "" {
-			return tunnel.TunnelConfig{}, fmt.Errorf("missing part at position %d", i+1)
-		}
-	}
 
 	protocol := "tcp"
 	localPort := 0
 	remotePort := 0
 
-	parsePort := func(s string) (int, error) {
-		p, err := strconv.Atoi(s)
-		if err != nil {
-			return 0, fmt.Errorf("port kh�ng ph?i s?: %q", s)
-		}
-		if p < 1 || p > 65535 {
-			return 0, fmt.Errorf("port ngo�i d?i 1..65535: %d", p)
-		}
-		return p, nil
-	}
-
 	switch len(parts) {
 	case 1:
-		// "80" -> tcp:80 (remote auto)
-		p, err := parsePort(parts[0])
-		if err != nil {
-			return tunnel.TunnelConfig{}, err
+		// e.g. "80"
+		if p, err := strconv.Atoi(parts[0]); err == nil {
+			localPort = p
 		}
-		localPort = p
 	case 2:
-		// "80:10080" -> tcp local:remote
-		// "udp:19132" -> udp local (remote auto)
-		if p1, err := parsePort(parts[0]); err == nil {
+		// e.g. "udp:19132" or "80:10500"
+		if p1, err := strconv.Atoi(parts[0]); err == nil {
+			// "80:10500" -> local:remote
 			localPort = p1
-			p2, err := parsePort(parts[1])
-			if err != nil {
-				return tunnel.TunnelConfig{}, err
+			if p2, err := strconv.Atoi(parts[1]); err == nil {
+				remotePort = p2
 			}
-			remotePort = p2
 		} else {
+			// "udp:19132" -> proto:local
 			protocol = strings.ToLower(parts[0])
-			if protocol != "tcp" && protocol != "udp" && protocol != "http" {
-				return tunnel.TunnelConfig{}, fmt.Errorf("proto kh�ng h? tr?: %q (ch? tcp/udp/http)", parts[0])
+			if p2, err := strconv.Atoi(parts[1]); err == nil {
+				localPort = p2
 			}
-			p2, err := parsePort(parts[1])
-			if err != nil {
-				return tunnel.TunnelConfig{}, err
-			}
-			localPort = p2
 		}
 	case 3:
-		// "tcp:22:10111" -> proto:local:remote
+		// e.g. "tcp:22:10111" -> proto:local:remote
 		protocol = strings.ToLower(parts[0])
-		if protocol != "tcp" && protocol != "udp" && protocol != "http" {
-			return tunnel.TunnelConfig{}, fmt.Errorf("proto kh�ng h? tr?: %q (ch? tcp/udp/http)", parts[0])
+		if p2, err := strconv.Atoi(parts[1]); err == nil {
+			localPort = p2
 		}
-		p2, err := parsePort(parts[1])
-		if err != nil {
-			return tunnel.TunnelConfig{}, err
+		if p3, err := strconv.Atoi(parts[2]); err == nil {
+			remotePort = p3
 		}
-		p3, err := parsePort(parts[2])
-		if err != nil {
-			return tunnel.TunnelConfig{}, err
-		}
-		localPort = p2
-		remotePort = p3
-	default:
-		return tunnel.TunnelConfig{}, fmt.Errorf("c� ph�p kh�ng h?p l?")
 	}
 
-	host := strings.TrimSpace(defaultHost)
-	if host == "" {
-		host = "localhost"
+	if protocol != "udp" && protocol != "http" {
+		protocol = "tcp"
+	}
+
+	// Default local port if not parsed
+	if localPort == 0 {
+		localPort = 80
 	}
 
 	return tunnel.TunnelConfig{
 		Protocol:      protocol,
-		LocalAddr:     net.JoinHostPort(host, strconv.Itoa(localPort)),
-		RequestedPort: remotePort, // 0 => server auto
-	}, nil
+		LocalAddr:     net.JoinHostPort("localhost", strconv.Itoa(localPort)),
+		RequestedPort: remotePort,
+	}
 }
 
 func (c *client) isHTTP() bool {

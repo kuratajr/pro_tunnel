@@ -1,0 +1,50 @@
+	var bars string
+	switch {
+	case ms <= 50:
+		bars = "[||||]"
+	case ms <= 120:
+		bars = "[||| ]"
+	case ms <= 250:
+		bars = "[|	pingText, bars := formatPingDisplay(ping)
+	pingColor := green
+
+	// Status line
+	statusLine := func() string {
+		now := time.Now().Format("15:04:05")
+		return fmt.Sprintf(bold+brightCyan+"?"+reset+"  %s Status   : %s%s%s (%s) | %sLog: proxvn.log%s", 
+			statusEmoji, statusColor, bold, statusText, now, yellow, reset)
+	}
+
+	// Helper to create a row with an emoji label
+	makeRow := func(emoji, label, val, color string) string {
+		// Standard visible width for label area is 16
+		// UTF-8 emojis take multi-bytes but usually 2 columns wide
+		labelPart := fmt.Sprintf("%s %-10s", emoji, label)
+		return fmt.Sprintf(bold+brightCyan+"?"+reset+"  %s : %s%s%s", labelPart, color, val, reset)
+	}
+
+	lines := []string{
+		bold + brightCyan + "???????????????????????????????????????????????????????",
+		bold + brightCyan + "?" + reset + bold + "      TrongDev | ProxVN - Tunnel Vi?t Nam Free",
+		bold + brightCyan + "???????????????????????????????????????????????????????",
+		statusLine(),
+		bold + brightCyan + "??? Danh s?ch Tunnels ?????????????????????????????????",
+	}
+
+	// Add each tunnel to the UI
+	c.tunnelMu.RLock()
+	for _, t := range c.tunnels {
+		proto := strings.ToUpper(t.Protocol)
+		local := t.LocalAddr
+		remote := ""
+		if t.Protocol == "http" {
+			domain := c.baseDomain
+			if domain == "" { domain = "vutrungocrong.fun" }
+			remote = fmt.Sprintf("https://%s.%s", t.Subdomain, domain)
+		} else {
+			hostPart, _, _ := net.SplitHostPort(c.serverAddr)
+			remote = fmt.Sprintf("%s:%d", hostPart, t.RemotePort)
+		}
+		
+		row := fmt.Sprintf(bold+brightCyan+"?"+reset+"  %-4s | %-20s -> %s", proto, local, remote)
+		lines = append(lines, row)

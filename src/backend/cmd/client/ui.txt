@@ -1,0 +1,100 @@
+
+func (c *client) getUDPCtrlStatus() string {
+	if strings.ToLower(c.protocol) != "udp" {
+		return "n/a"
+	}
+	c.udpCtrlMu.Lock()
+	status := c.udpCtrlStatus
+	c.udpCtrlMu.Unlock()
+	if status == "" {
+		return "unknown"
+	}
+	return status
+}
+
+func (c *client) getSessionStats() (active int, total uint64) {
+	activeTCP := atomic.LoadInt64(&c.activeSessions)
+	totalTCP := atomic.LoadUint64(&c.totalSessions)
+
+	c.udpMu.Lock()
+	activeUDP := int64(len(c.udpSessions))
+	c.udpMu.Unlock()
+	totalUDP := atomic.LoadUint64(&c.totalUDPSessions)
+
+	return int(activeTCP + activeUDP), totalTCP + totalUDP
+}
+
+func decodeUDPField(packet []byte, offset int) (string, int, bool) {
+	if offset+2 > len(packet) {
+		return "", offset, false
+	}
+	l := int(binary.BigEndian.Uint16(packet[offset : offset+2]))
+	offset += 2
+	if l < 0 || offset+l > len(packet) {
+		return "", offset, false
+	}
+	return string(packet[offset : offset+l]), offset + l, true
+}
+
+func buildUDPMessage(msgType byte, key, id string, payload []byte) []byte {
+	keyLen := len(key)
+	idLen := len(id)
+	total := 1 + 2 + keyLen
+	if msgType != udpMsgHandshake {
+		total += 2 + idLen
+	}
+	total += len(payload)
+	buf := make([]byte, total)
+	buf[0] = msgType
+	binary.BigEndian.PutUint16(buf[1:], uint16(keyLen))
+	copy(buf[3:], key)
+	offset := 3 + keyLen
+	if msgType != udpMsgHandshake {
+		binary.BigEndian.PutUint16(buf[offset:], uint16(idLen))
+		offset += 2
+		copy(buf[offset:], id)
+		offset += idLen
+	}
+	copy(buf[offset:], payload)
+	return buf
+}
+
+func (c *client) reportProxyError(id string, err error) {
+	if c.enc == nil {
+		return
+	}
+	_ = c.enc.Encode(tunnel.Message{
+		Type:  "proxy_error",
+		ID:    id,
+		Error: err.Error(),
+	})
+}
+
+func (c *client) closeControl() {
+	c.closeOnce.Do(func() {
+		close(c.done)
+	})
+	c.closeAllUDPSessions()
+	c.stopUDPPing()
+	c.setUDPCtrlStatus("offline")
+	c.udpMu.Lock()
+	if c.udpConn != nil {
+		c.udpConn.Close()
+		c.udpConn = nil
+	}
+	c.udpReady = false
+	c.udpMu.Unlock()
+	if c.control != nil {
+		c.control.Close()
+	}
+	c.control = nil
+	c.enc = nil
+	c.dec = nil
+	if c.trafficQuit != nil {
+		close(c.trafficQuit)
+		c.trafficQuit = nil
+	}
+	if c.statusCh != nil {
+		close(c.statusCh)
+		c.statusCh = nil
+	}
